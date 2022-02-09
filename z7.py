@@ -62,7 +62,7 @@ def show_map(ll_spn=None, map_type="map", add_params=None):
     response = requests.get(map_request)
 
     if not response:
-        print("Ошибка выполнения запроса:")
+        print("Ошибка выполнения запросa:")
         print(map_request)
         print("Http статус:", response.status_code, "(", response.reason, ")")
 
