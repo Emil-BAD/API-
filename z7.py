@@ -1,105 +1,112 @@
+import requests
+import pygame
 import os
 import sys
-import random
 
-import pygame
-
-
-# Изображение не получится загрузить
-# без предварительной инициализации pygame
-def load_image(name, colorkey=None):
-    fullname = os.path.join('data', name)
-    # если файл не существует, то выходим
-    if not os.path.isfile(fullname):
-        print(f"Файл с изображением '{fullname}' не найден")
-        sys.exit()
-    image = pygame.image.load(fullname)
-    return image
+API_KEY = "40d1649f-0493-4b70-98ba-98533de7710b"
 
 
-class Mountain(pygame.sprite.Sprite):
-    image = load_image("plain1.png")
+def geocode(address):
+    geocoder_request = f"http://geocode-maps.yandex.ru/1.x/"
+    geocoder_params = {
+        "apikey": API_KEY,
+        "geocode": address,
+        "format": "json"}
 
-    def __init__(self, width, height, plainers, pos):
-        super().__init__(plainers)
-        self.image = Mountain.image
-        self.rect = self.image.get_rect()
-        self.add(plainers)
-        self.mask = pygame.mask.from_surface(self.image)
-        # вычисляем маску для эффективного сравнения
-        # располагаем горы внизу
-        self.rect.x = pos[0]
-        self.rect.y = pos[1]
+    response = requests.get(geocoder_request, params=geocoder_params)
 
+    if response:
+        json_response = response.json()
+    else:
+        raise RuntimeError(
+            f"""Ошибка выполнения запроса:
+            {geocoder_request}
+            Http статус: {response.status_code} ({response.reason})""")
 
-class Landing(pygame.sprite.Sprite):
-    image = load_image("cube.png")
-
-    def __init__(self, pos, all_sprites, plainers, height):
-        super().__init__(all_sprites)
-        self.image = Landing.image
-        self.rect = self.image.get_rect()
-        self.height = height
-        self.plainers = plainers
-        self.flag = 0
-        self.all_sprites = all_sprites
-        # вычисляем маску для эффективного сравнения
-        self.mask = pygame.mask.from_surface(self.image)
-        self.rect.x = pos[0]
-        self.rect.y = pos[1]
-
-    def update(self, *event):
-        if self.rect.y > self.height:
-            self.all_sprites.remove(-1)
-        if self.flag == 0:
-            self.rect = self.rect.move(0, 1)
-        if self.plainers:
-            a = pygame.sprite.spritecollide(self, self.plainers, False)
-            if len(a) > 0:
-                self.flag = 1
-                self.rect = self.rect.move(0, 0)
-        if event:
-            if event[0].type == pygame.KEYDOWN:
-                if event[0].key == pygame.K_LEFT:
-                    self.rect.x -= 10
-                    # если была нажата стрелка вправо
-                if event[0].key == pygame.K_RIGHT:
-                    self.rect.x += 10
+    return json_response["response"]["GeoObjectCollection"]["featureMember"][0]["GeoObject"] if json_response else None
 
 
-def update(self):
-    self.rect = self.rect.move(self.vx, self.vy)
+def get_coordinates(address):
+    toponym = geocode(address)
+    if not toponym:
+        return None, None
+    toponym_coordinates = toponym["Point"]["pos"]
+    toponym_longitude, toponym_lattitude = toponym_coordinates.split(" ")
+    return float(toponym_longitude), float(toponym_lattitude)
+
+
+def get_ll_span(address):
+    toponym = geocode(address)
+    if not toponym:
+        return None, None
+    toponym_coordinates = toponym["Point"]["pos"]
+    toponym_longitude, toponym_lattitude = toponym_coordinates.split(" ")
+    ll = ",".join([toponym_longitude, toponym_lattitude])
+    envelope = toponym["boundedBy"]["Envelope"]
+    l, b = envelope["lowerCorner"].split(" ")
+    r, t = envelope["upperCorner"].split(" ")
+    dx = abs(float(l) - float(r)) / 2
+    dy = abs(float(b) - float(t)) / 2
+    span = f'{dx}, {dy}'
+    return ll, span
+
+
+def show_map(ll_spn=None, map_type="map", add_params=None):
+    if ll_spn:
+        map_request = f"http://static-maps.yandex.ru/1.x/?{ll_spn}&l={map_type}"
+    else:
+        map_request = f"http://static-maps.yandex.ru/1.x/?l={map_type}"
+
+    if add_params:
+        map_request += "&" + add_params
+    response = requests.get(map_request)
+
+    if not response:
+        print("Ошибка выполнения запроса:")
+        print(map_request)
+        print("Http статус:", response.status_code, "(", response.reason, ")")
+
+    map_file = "map.png"
+    try:
+        with open(map_file, "wb") as file:
+            file.write(response.content)
+    except IOError as ex:
+        print("Ошибка записи временного файла:", ex)
+
+    # Инициализируем pygame
+    pygame.init()
+    screen = pygame.display.set_mode((600, 450))
+    # Рисуем картинку, загружаемую из только что созданного файла.
+    screen.blit(pygame.image.load(map_file), (0, 0))
+    # Переключаем экран и ждем закрытия окна.
+    pygame.display.flip()
+    while pygame.event.wait().type != pygame.QUIT:
+        pass
+
+    pygame.quit()
+    # Удаляем за собой файл с изображением.
+    os.remove(map_file)
 
 
 def main():
-    pygame.init()
-    width = 500
-    height = 500
-    size = (width, height)
-    screen = pygame.display.set_mode(size)
-    fps = 50
-    clock = pygame.time.Clock()
-    running = True
-    plainers = pygame.sprite.Group()
-    all_sprites = pygame.sprite.Group()
-    pygame.display.set_caption("ЗА ВДВ!")
-    while running:
-        screen.fill(pygame.Color('black'))
-        for event in pygame.event.get():
-            all_sprites.update(event)
-            if event.type == pygame.QUIT:
-                running = False
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if len(all_sprites) != 1:
-                    Landing(event.pos, all_sprites, plainers, height)
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
-                Mountain(width, height, plainers, event.pos)
-        clock.tick(fps)
-        all_sprites.draw(screen)
-        all_sprites.update()
-        plainers.draw(screen)
-        pygame.display.flip()
-    pygame.quit()
+    toponym_to_find = " ".join(sys.argv[1:])
+
+    if toponym_to_find:
+        # Показываем карту с фиксированным масштабом.
+        lat, lon = get_coordinates(toponym_to_find)
+        ll_spn = f"ll={lat},{lon}&spn=0.005,0.005"
+        show_map(ll_spn, "map")
+
+        # Показываем карту с масштабом, подобранным по заданному объекту.
+        ll, spn = get_ll_span(toponym_to_find)
+        ll_spn = f"ll={ll}&spn={spn}"
+        show_map(ll_spn, "map")
+
+        # Добавляем исходную точку на карту.
+        point_param = f"pt={ll}"
+        show_map(ll_spn, "map", add_params=point_param)
+    else:
+        print('No data')
 
 
 if __name__ == "__main__":

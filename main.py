@@ -1,211 +1,84 @@
-import pygame
 import os
 import sys
-from PyQt5 import uic
-from PyQt5.QtWidgets import QDialog, QApplication
+import pygame
+import requests
+
+API_KEY = '40d1649f-0493-4b70-98ba-98533de7710b'
+colors_pt = {'wt': 'белый', 'do': 'оранжевый', 'db': 'синий', 'bl': 'голубой', 'rd': 'красный', 'gn': 'зелёный'}
 
 
-def load_image(name, color_key=None):
-    fullname = os.path.join('data', name)
-    try:
-        image = pygame.image.load(fullname)
-    except pygame.error as message:
-        print('Не удаётся загрузить:', name)
-        raise SystemExit(message)
-    image = image.convert_alpha()
-    if color_key is not None:
-        if color_key == -1:
-            color_key = image.get_at((0, 0))
-        image.set_colorkey(color_key)
-    return image
+def geocode(address):
+    geocoder_request = f"http://geocode-maps.yandex.ru/1.x/?apikey={API_KEY}&geocode={address}&format=json"
+    response = requests.get(geocoder_request)
+    if response:
+        json_response = response.json()
+    else:
+        raise RuntimeError(
+            f"Ошибка выполнения запроса {geocoder_request}. HTTP-статус: {response.status_code}. ({response.reason})")
+    features = json_response["response"]["GeoObjectCollection"]["featureMember"]
+    return features[0]["GeoObject"] if features else None
 
 
+def get_address_coords(address):
+    toponym = geocode(address)
+    toponym_address = toponym["metaDataProperty"]["GeocoderMetaData"]["text"]
+    toponym_coordinates = toponym["Point"]["pos"]
+    return ",".join(toponym_coordinates.split())
+
+
+def get_pts(address, color):
+    global flag_for_pt
+    coord = get_address_coords(address)
+    main_clr = None
+    for i, j in colors_pt.items():
+        if j == color.lower():
+            main_clr = i
+    string = f"{coord},pm{main_clr}s"
+    pts.append(string)
+    flag_for_pt = True
+
+
+def get_photo(address):
+    global flag_for_pt
+    if flag_for_pt is False:
+        map_request = f"http://static-maps.yandex.ru/1.x/?ll={get_address_coords(address)}&z=8&l=map"
+    else:
+        map_request = f"http://static-maps.yandex.ru/1.x/?ll={get_address_coords(address)}&l=map&pt={'~'.join(pts)}"
+    response = requests.get(map_request)
+
+    if not response:
+        print("Ошибка выполнения запроса:")
+        print(map_request)
+        print("Http статус:", response.status_code, "(", response.reason, ")")
+        sys.exit(1)
+
+    # Запишем полученное изображение в файл.
+    with open(map_file, "wb") as file:
+        file.write(response.content)
+
+
+flag_for_pt = False
+pts = []
+# Инициализируем pygame
 pygame.init()
-screen_size = (500, 500)
-screen = pygame.display.set_mode(screen_size)
-FPS = 50
-
-tile_images = {"wall": load_image("box.png"), "empty": load_image("grass.png")}
-player_image = load_image("mario.png")
-
-tile_width = tile_height = 50
-
-a = 0
-
-
-class Example(QDialog):
-
-    def __init__(self):
-        super().__init__()
-        uic.loadUi('./data/dialog.ui', self)
-        self.pushButton.clicked.connect(self.run)
-
-    def run(self):
-        global a
-        a = self.lineEdit.text()
-        self.close()
-
-
-class SpriteGroup(pygame.sprite.Group):
-    def __init__(self):
-        super().__init__()
-
-    def get_event(self, event):
-        for sprite in self:
-            sprite.get_event(event)
-
-
-class Sprite(pygame.sprite.Sprite):
-    def __init__(self, group):
-        super().__init__(group)
-        self.rect = None
-
-    def get_event(self, event):
-        pass
-
-
-class Tile(Sprite):
-    def __init__(self, tile_type, pos_x, pos_y):
-        super().__init__(sprite_group)
-        self.image = tile_images[tile_type]
-        self.rect = self.image.get_rect().move(
-            tile_width * pos_x, tile_height * pos_y)
-
-
-class Player(Sprite):
-    def __init__(self, pos_x, pos_y):
-        super().__init__(hero_group)
-        self.image = player_image
-        self.rect = self.image.get_rect().move(
-            tile_width * pos_x + 15, tile_height * pos_y + 5)
-        self.pos = (pos_x, pos_y)
-
-    def move(self, x, y):
-        self.pos = (x, y)
-        self.rect = self.image.get_rect().move(tile_width * self.pos[0] + 15, tile_height * self.pos[1] + 5)
-
-
-player = None
-running = True
-clock = pygame.time.Clock()
-sprite_group = SpriteGroup()
-hero_group = SpriteGroup()
-
-
-def terminate():
-    pygame.quit()
-    sys.exit()
-
-
-def start_screen():
-    intro_text = ["ЗАСТАВКА", "",
-                  "Правила игры",
-                  "Если в правилах несколько строк,",
-                  "приходится выводить их построчно"]
-
-    fon = pygame.transform.scale(load_image('wallpaper.jpg'), screen_size)
-    screen.blit(fon, (0, 0))
-    font = pygame.font.Font(None, 30)
-    text_coord = 50
-    for line in intro_text:
-        string_rendered = font.render(line, 1, pygame.Color('white'))
-        intro_rect = string_rendered.get_rect()
-        text_coord += 10
-        intro_rect.top = text_coord
-        intro_rect.x = 10
-        text_coord += intro_rect.height
-        screen.blit(string_rendered, intro_rect)
-
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                terminate()
-            elif event.type == pygame.KEYDOWN or \
-                    event.type == pygame.MOUSEBUTTONDOWN:
-                return  # начинаем игру
-        pygame.display.flip()
-        clock.tick(FPS)
-
-
-def load_level(filename):
-    try:
-        filename = "data/" + filename
-        # читаем уровень, убирая символы перевода строки
-        with open(filename, 'r') as mapFile:
-            level_map = [line.strip() for line in mapFile]
-
-        # и подсчитываем максимальную длину
-        max_width = max(map(len, level_map))
-
-        # дополняем каждую строку пустыми клетками ('.')
-        return list(map(lambda x: x.ljust(max_width, '.'), level_map))
-    except FileNotFoundError:
-        print('Нет такого уровня(')
-
-
-def generate_level(level):
-    try:
-        new_player, x, y = None, None, None
-        for y in range(len(level)):
-            for x in range(len(level[y])):
-                if level[y][x] == '.':
-                    Tile('empty', x, y)
-                elif level[y][x] == '#':
-                    Tile('wall', x, y)
-                elif level[y][x] == '@':
-                    Tile('empty', x, y)
-                    new_player = Player(x, y)
-                    # level[y][x] = "."
-        # вернем игрока, а также размер поля в клетках
-        return new_player, x, y
-    except TypeError:
-        pass
-
-
-def move(hero, movement):
-    x, y = hero.pos
-    if movement == "up":
-        if y > 0 and level_map[y - 1][x] == ".":
-            hero.move(x, y - 1)
-    elif movement == "down":
-        if y < max_y - 1 and level_map[y + 1][x] == ".":
-            hero.move(x, y + 1)
-    elif movement == "left":
-        if x > 0 and level_map[y][x - 1] == ".":
-            hero.move(x - 1, y)
-    elif movement == "right":
-        if x < max_x and level_map[y][x + 1] == ".":
-            hero.move(x + 1, y)
-
-
-start_screen()
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    ex = Example()
-    ex.show()
-start_screen()
-try:
-    level_map = load_level(a)
-    hero, max_x, max_y = generate_level(level_map)
-    pygame.display.set_caption("MARIOOO")
-    while running:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_UP:
-                    move(hero, "up")
-                elif event.key == pygame.K_DOWN:
-                    move(hero, "down")
-                elif event.key == pygame.K_LEFT:
-                    move(hero, "left")
-                elif event.key == pygame.K_RIGHT:
-                    move(hero, "right")
-        screen.fill(pygame.Color("black"))
-        sprite_group.draw(screen)
-        hero_group.draw(screen)
-        clock.tick(FPS)
-        pygame.display.flip()
-    pygame.quit()
-except BaseException:
+map_file = "map.png"
+screen = pygame.display.set_mode((600, 450))
+get_pts("Большая спортивная арена Лужники, Москва", "Белый")
+get_pts("Стадион футбольного клуба 'Динамо', Москва", "голубой")
+get_pts("Стадион футбольного клуба 'Спартак', Москва", "красный")
+get_photo("Москва")
+# Рисуем картинку, загружаемую из только что созданного файла.
+screen.blit(pygame.image.load(map_file), (0, 0))
+# Переключаем экран и ждем закрытия окна.
+pygame.display.flip()
+while pygame.event.wait().type != pygame.QUIT:
     pass
+pygame.quit()
+
+# Удаляем за собой файл с изображением.
+os.remove(map_file)
+"""
+Лужники - ll=37.560561 55.715375
+Динамо - ll=37.562087 55.791627
+Спартак - ll=37.440363 55.817923
+"""
